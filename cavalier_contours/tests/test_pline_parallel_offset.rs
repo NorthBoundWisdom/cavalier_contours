@@ -648,6 +648,154 @@ mod test_past_failures {
     );
 }
 
+#[test]
+fn repeat_position_input_is_sanitized_before_offset() {
+    // Minimal regression case: repeat-position input must be sanitized in release/debug paths.
+    // Without this change, debug builds panic on the internal repeat-position assertion.
+    use cavalier_contours::pline_closed_userdata;
+
+    let input = pline_closed_userdata![
+        [4],
+        (0.0, 0.0, 0.0),
+        (20.0, 0.0, 0.0),
+        (20.0, 0.0, 0.0),
+        (20.0, 10.0, 0.0),
+        (0.0, 10.0, 0.0)
+    ];
+
+    let result = input.parallel_offset(-2.0);
+    assert_eq!(result.len(), 1, "repeat-position input should still offset");
+    assert_eq!(
+        result[0].get_userdata_values().collect::<Vec<_>>(),
+        vec![4],
+        "offset should preserve input userdata"
+    );
+    assert!(
+        result[0]
+            .remove_repeat_pos(PlineProperties::POS_EQ_EPS)
+            .is_none(),
+        "offset result should not contain repeat position vertexes",
+    );
+
+    let actual = create_property_set(&result, false);
+    let expected = vec![PlineProperties::new(
+        8,
+        332.56637061436,
+        72.566370614359,
+        -2.0,
+        -2.0,
+        22.0,
+        12.0,
+        vec![4],
+    )];
+    assert!(property_sets_match(&actual, &expected));
+}
+
+#[test]
+fn repeat_position_input_ignores_external_aabb_after_sanitize() {
+    // If input is sanitized, external aabb_index from the original polyline must be ignored.
+    // Otherwise index/source mismatch can lead to incorrect slice queries.
+    use cavalier_contours::pline_closed_userdata;
+
+    let input = pline_closed_userdata![
+        [4],
+        (0.0, 0.0, 0.0),
+        (20.0, 0.0, 0.0),
+        (20.0, 0.0, 0.0),
+        (20.0, 10.0, 0.0),
+        (0.0, 10.0, 0.0)
+    ];
+
+    let input_aabb = input.create_approx_aabb_index();
+    let options = PlineOffsetOptions {
+        aabb_index: Some(&input_aabb),
+        ..Default::default()
+    };
+
+    let result = input.parallel_offset_opt(-2.0, &options);
+    assert_eq!(result.len(), 1, "repeat-position input should still offset");
+    assert_eq!(
+        result[0].get_userdata_values().collect::<Vec<_>>(),
+        vec![4],
+        "offset should preserve input userdata"
+    );
+    assert!(
+        result[0]
+            .remove_repeat_pos(PlineProperties::POS_EQ_EPS)
+            .is_none(),
+        "offset result should not contain repeat position vertexes",
+    );
+
+    let actual = create_property_set(&result, false);
+    let expected = vec![PlineProperties::new(
+        8,
+        332.56637061436,
+        72.566370614359,
+        -2.0,
+        -2.0,
+        22.0,
+        12.0,
+        vec![4],
+    )];
+    assert!(property_sets_match(&actual, &expected));
+}
+
+#[test]
+fn repeat_position_real_world_input_is_sanitized_before_offset() {
+    // Real-world parallel offset case with repeated first vertex and micro-segments.
+    // This is the concrete "fails without fix" regression (old code panics before offseting).
+    use cavalier_contours::pline_open_userdata;
+
+    let input = pline_open_userdata![
+        [4],
+        (-736.0355179644317, 8182.4047193246215, 0.0),
+        (-736.0355179644317, 8182.4047193246215, 0.0),
+        (
+            -736.0354497945418,
+            8182.4047234225045,
+            -0.0000000280872245462
+        ),
+        (-736.035438579896, 8182.404724096647, -0.0000000028133819718),
+        (-736.0353453440823, 8182.404729701303, -0.17144715353094436),
+        (4578.805065246941, 6656.67568798969, 0.0),
+        (4578.8050878621025, 6656.675671873701, 0.0),
+        (4578.805231182584, 6656.675569740822, 0.0)
+    ];
+
+    let input_aabb = input.create_approx_aabb_index();
+    let options = PlineOffsetOptions {
+        aabb_index: Some(&input_aabb),
+        ..Default::default()
+    };
+
+    let result = input.parallel_offset_opt(3.0, &options);
+    assert_eq!(result.len(), 1, "repeat-position input should still offset");
+    assert_eq!(
+        result[0].get_userdata_values().collect::<Vec<_>>(),
+        vec![4],
+        "offset should preserve input userdata"
+    );
+    assert!(
+        result[0]
+            .remove_repeat_pos(PlineProperties::POS_EQ_EPS)
+            .is_none(),
+        "offset result should not contain repeat position vertexes",
+    );
+
+    let actual = create_property_set(&result, false);
+    let expected = vec![PlineProperties::new(
+        4,
+        0.0,
+        5639.266054391041,
+        -736.2155311168141,
+        6659.118694762635,
+        4580.546248163486,
+        8200.360349202138,
+        vec![4],
+    )];
+    assert!(property_sets_match(&actual, &expected));
+}
+
 // To be revisited:
 
 // Offset fails due distance check - goes away if input is scaled up first

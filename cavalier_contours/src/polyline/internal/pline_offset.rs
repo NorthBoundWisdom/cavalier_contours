@@ -38,7 +38,7 @@ where
 {
     let process_line_seg = |v1: PlineVertex<T>, v2: PlineVertex<T>| -> RawPlineOffsetSeg<T> {
         let line_v = v2.pos() - v1.pos();
-        let offset_v = line_v.unit_perp().scale(offset);
+        let offset_v = line_v.safe_unit_perp().scale(offset);
         RawPlineOffsetSeg {
             v1: PlineVertex::from_vector2(v1.pos() + offset_v, T::zero()),
             v2: PlineVertex::from_vector2(v2.pos() + offset_v, T::zero()),
@@ -51,8 +51,8 @@ where
         let (arc_radius, arc_center) = seg_arc_radius_and_center(v1, v2);
         let offs = if v1.bulge_is_neg() { offset } else { -offset };
         let radius_after_offset = arc_radius + offs;
-        let v1_to_center = (v1.pos() - arc_center).normalize();
-        let v2_to_center = (v2.pos() - arc_center).normalize();
+        let v1_to_center = (v1.pos() - arc_center).safe_normalize();
+        let v2_to_center = (v2.pos() - arc_center).safe_normalize();
 
         let (new_v1_bulge, collapsed_arc) = if radius_after_offset.fuzzy_lt(T::zero()) {
             // collapsed arc, offset arc start and end points towards arc center and turn into line
@@ -1476,30 +1476,32 @@ where
     result
 }
 
-pub fn parallel_offset<P, T, O>(polyline: &P, offset: T, options: &PlineOffsetOptions<T>) -> Vec<O>
+fn parallel_offset_for_source<P, T, O>(
+    polyline: &P,
+    offset: T,
+    options: &PlineOffsetOptions<T>,
+    allow_external_index: bool,
+) -> Vec<O>
 where
     P: PlineSource<Num = T> + ?Sized,
     T: Real,
     O: PlineCreation<Num = T>,
 {
-    if polyline.vertex_count() < 2 {
-        return Vec::new();
-    }
-    debug_assert!(
-        polyline.remove_repeat_pos(options.pos_equal_eps).is_none(),
-        "bug: input assumed to not have repeat position vertexes"
-    );
-
     let constructed_index;
-    let index = if let Some(x) = options.aabb_index {
-        x
+    let index = if allow_external_index {
+        if let Some(x) = options.aabb_index {
+            x
+        } else {
+            constructed_index = polyline.create_approx_aabb_index();
+            &constructed_index
+        }
     } else {
         constructed_index = polyline.create_approx_aabb_index();
         &constructed_index
     };
 
     let raw_offset: O = create_raw_offset_polyline(polyline, offset, options.pos_equal_eps);
-    let mut result = if raw_offset.is_empty() {
+    if raw_offset.is_empty() {
         Vec::new()
     } else if polyline.is_closed() && !options.handle_self_intersects {
         let slices = slices_from_raw_offset(polyline, &raw_offset, index, offset, options);
@@ -1528,6 +1530,29 @@ where
             raw_offset.vertex_count(),
             options,
         )
+    }
+}
+
+pub fn parallel_offset<P, T, O>(polyline: &P, offset: T, options: &PlineOffsetOptions<T>) -> Vec<O>
+where
+    P: PlineSource<Num = T> + ?Sized,
+    T: Real,
+    O: PlineCreation<Num = T>,
+{
+    if polyline.vertex_count() < 2 {
+        return Vec::new();
+    }
+
+    // In release builds we still sanitize repeat positions to prevent unstable/degenerate segments.
+    let mut result = if let Some(cleaned) = polyline.remove_repeat_pos(options.pos_equal_eps) {
+        if cleaned.vertex_count() < 2 {
+            Vec::new()
+        } else {
+            // user-provided aabb index is tied to the original polyline, rebuild for cleaned source
+            parallel_offset_for_source(&cleaned, offset, options, false)
+        }
+    } else {
+        parallel_offset_for_source(polyline, offset, options, true)
     };
 
     debug_assert!(

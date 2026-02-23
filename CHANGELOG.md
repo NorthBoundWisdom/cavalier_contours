@@ -4,6 +4,11 @@ All notable changes to the cavalier_contours crate will be documented in this fi
 
 ## Unreleased
 
+### Fixed 🐛
+
+- Improved `parallel_offset` robustness for repeat-position/degenerate input by sanitizing repeat
+  vertices in release builds and guarding offset vector normalization against near-zero vectors.
+
 ## 0.7.0 - 2026-01-02
 
 ### Added ⭐
